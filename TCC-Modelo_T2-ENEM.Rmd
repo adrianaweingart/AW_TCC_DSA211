@@ -1,0 +1,508 @@
+---
+title: "TCC - Modelo T2 (Análise Exploratória) - ENEM"
+author: "Adriana Melges Q Weingart"
+date: "Setembro 2022"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    number_sections: true
+    toc_depth: 5
+    toc_float:
+      collapsed: false
+---
+
+```{r controle_tempo_total_start, include = FALSE}
+library(tictoc)
+tic("total")
+```
+
+```{r settings, include=FALSE}
+set.seed(1403)
+options(scipen=999)
+```
+
+# Análise Exploratória: Dados do ENEM 2020
+
+```{r controle_tempo_dataloading_start, include = FALSE}
+tic("total_dataloading")
+```
+
+## Dataset
+
+Microdados do ENEM 2020, disponíveis na página do [Ministério da Educação - Instituto Nacional de Estudos e Pesquisas Educacionais Anísio Teixeira \| Inep - ENEM](https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/enem).
+
+## Bibliotecas
+
+```{r libraries, warning = FALSE, message = FALSE}
+library(tidyverse)
+library(stringi)
+library(gridExtra)
+library(psych)
+library(kableExtra)
+library(tictoc)
+library(knitr)
+```
+
+
+## Loading Data
+
+Carregando o dataset de Microdados do Enem de 2020 Dataset: ENEM2020
+
+```{r, Dataset: ENEM2020, warning = FALSE, message = FALSE}
+ENEM2020 <- read_delim("MICRODADOS_ENEM_2020.csv", delim = ";")
+```
+
+```{r controle_tempo_dataloading_fim, include = FALSE}
+toc() -> TOTAL_DL
+TOTAL_DL <- c(TOTAL_DL$msg, TOTAL_DL$toc - TOTAL_DL$tic)
+
+TOTAL_DL <- data.frame(TOTAL_DL)
+TOTAL_DL %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL_DL
+data.frame(t(TOTAL_DL)) -> TOTAL_DL
+
+write.csv(TOTAL_DL, "A1 (1) - T2 - Tempo Data Loading.csv")
+```
+
+## Cleaning Data
+
+```{r controle_tempo_datawrangling_start, include = FALSE}
+tic("total_datawrangling")
+```
+
+### Reduzindo o Dataset
+
+**Objetivo:** otimizar o processamento e análise, mantendo apenas as variáveis de interesse
+
+```{r Cleanup - observações não usadas, warning = FALSE, message = FALSE}
+ENEM <- ENEM2020[ , c(
+        "NU_INSCRICAO",       # Número de inscrição
+        "TP_SEXO",            # Categórica - Sexo
+        "TP_ESCOLA",          # Categórica - Tipo de escola do Ensino Médio
+        "SG_UF_PROVA",        # Categórica - Sigla da Unidade da Federação da aplicação da prova
+        "TP_PRESENCA_CN",     # Categórica - Presença na prova objetiva de Ciências da Natureza
+        "TP_PRESENCA_CH",     # Categórica - Presença na prova objetiva de Ciências Humanas
+        "TP_PRESENCA_LC",     # Categórica - Presença na prova objetiva de Linguagens e Códigos
+        "TP_PRESENCA_MT",     # Categórica - Presença na prova objetiva de Matemática
+        "NU_NOTA_CN",         # Numérica - Nota da prova de Ciências da Natureza
+        "NU_NOTA_CH",         # Numérica - Nota da prova de Ciências Humanas
+        "NU_NOTA_LC",         # Numérica - Nota da prova de Linguagens e Códigos
+        "NU_NOTA_MT",         # Numérica - Nota da prova de Matemática
+        "TP_STATUS_REDACAO",  # Categórica - Situação da redação do participante
+        "NU_NOTA_REDACAO")]   # Numérica - Nota da prova de redação
+
+ENEM <- ENEM %>%
+  rename(ciencias_natureza = NU_NOTA_CH,
+         ciencias_humanas = NU_NOTA_CH,
+         linguagens_codigos = NU_NOTA_LC,
+         matematica = NU_NOTA_MT,
+         redacao = NU_NOTA_REDACAO)
+```
+
+Essa etapa realiza 2 ações: 
+<br>
+1. Reduzir o número de variáveis do DataSet de `r ncol(ENEM2020)` para `r ncol(ENEM)`;  
+2. Renomear as variáveis de notas para nomes mais claros para leitura.
+
+### Verificando NAs no dataset
+
+```{r, warning = FALSE}
+colSums(is.na(ENEM))
+```
+
+### Removendo as entradas dos participantes que faltaram alguma das provas
+
+```{r Cleanup - participantes que faltaram, warning = FALSE, message = FALSE}
+ENEM[ENEM$TP_PRESENCA_CN == '1' & 
+     ENEM$TP_PRESENCA_CH == '1' & 
+     ENEM$TP_PRESENCA_LC == '1' & 
+     ENEM$TP_PRESENCA_MT == '1', ] -> ENEM
+```
+
+**Comentário:**
+
+Muitos NAs estão nas notas dos participantes.
+
+As variáveis NU_NOTA_CN, NU_NOTA_CH, NU_NOTA_LC e NU_NOTA_MT são as notas dos participantes nas provas. NA nestes campos indicam: faltou à prova (0) ou foi eliminado na prova (2) - valores das variáveis TP_PRESENÇA_xx.
+
+Para evitar NA nas notas (participantes faltaram ou foram eliminados), considerando apenas as observações com TP_PRESENÇA_xx = 1 (presente na prova).
+
+Novo Dataframe criado: ENEM_presents, com apenas os presentes nas provas.
+
+```{r Cleanup - verificação participantes que faltaram, warning = FALSE, message = FALSE}
+ENEM %>% filter(TP_PRESENCA_CN == "1" & 
+                TP_PRESENCA_CH == "1" &
+                TP_PRESENCA_LC == "1" &
+                TP_PRESENCA_MT == "1") -> ENEM_presents
+```
+
+Com a remoção dos NAs (participantes que faltaram ou que foram desclassificados), o dataset passou de `r nrow(ENEM)` observações para `r nrow(ENEM_presents)` observações.
+
+Verificação de NAs no dataset, após a remoção dos ausentes e eliminados.
+<br> 
+Dataset usado: ENEM_presents
+
+### Verificando NAs no dataset
+
+```{r, warning = FALSE}
+colSums(is.na(ENEM_presents))
+```
+
+Não há mais NAs no dataset ENEM_presents.
+
+### Substituindo valores originais do dataset oficial por valores mais claros
+
+**Tipo de Escola**
+
+| valor original | Novo valor    |
+|----------------|---------------|
+| 1              | não respondeu |
+| 2              | pública       |
+| 3              | privada       |
+| 4              | exterior      |
+
+> Uso de pacote *stringi*
+
+```{r Cleanup - replace values, include = FALSE}
+ENEM_presents$TP_ESCOLA <- stri_replace_all_regex(ENEM_presents$TP_ESCOLA,
+                                                  pattern = c('1', '2', '3', '4'),
+                                                  replacement = c('não respondeu', 
+                                                                  'pública', 
+                                                                  'privada', 
+                                                                  'exterior'),
+                                                  vectorize = FALSE)
+```
+
+```{r controle_tempo_datawrangling_fim, include = FALSE}
+toc() -> TOTAL_DW
+TOTAL_DW <- c(TOTAL_DW$msg, TOTAL_DW$toc - TOTAL_DW$tic)
+
+TOTAL_DW <- data.frame(TOTAL_DW)
+TOTAL_DW %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL_DW
+data.frame(t(TOTAL_DW)) -> TOTAL_DW
+
+write.csv(TOTAL_DW, "A1 (1) - T2 - Tempo Data Wrangling.csv")
+```
+
+## Análise Exploratória
+
+```{r controle_tempo_exploratoria_start, include = FALSE}
+tic("total_analiseexploratoria")
+```
+
+### Distribuição de participantes por Estados
+
+```{r Distribuição por Estado, warning = FALSE}
+ENEM_presents %>%
+  ggplot() +
+  geom_bar(aes(x = SG_UF_PROVA, fill = SG_UF_PROVA)) +
+  labs(title = "Particiantes do ENEM 2020 por Estado",
+       x = "Estados",
+       y = "participantes") +
+  theme(legend.position = "none") +
+  scale_y_continuous(labels = scales::comma)
+#  geom_label(aes(x = SG_UF_PROVA, label = ..count..), 
+#             stat = "count", vjust = 0.5) +
+```
+
+```{r Contagem Estados - mais e menos participantes, include = FALSE}
+# Mais Participantes
+ENEM_presents %>% 
+  group_by(SG_UF_PROVA) %>% 
+  count(SG_UF_PROVA, sort = TRUE) %>% 
+  head(n = 1L) -> ENEM_mais_participantes
+# Menos Participantes
+ENEM_presents %>% 
+  group_by(SG_UF_PROVA) %>% 
+  count(SG_UF_PROVA, sort = TRUE) %>% 
+  tail(n = 1L) -> ENEM_menos_participantes
+```
+
+
+**Comentário:** 
+Pode-se observar que o Estado com mais participantes nesta edição do ENEM foi `r ENEM_mais_participantes[1]` (com `r ENEM_mais_participantes[2]` participantes); e o Estado com menos participantes foi `r ENEM_menos_participantes[1]` (com `r ENEM_menos_participantes[2]`).
+
+### Provas de Redação e Matemática
+
+#### Desempenho dos alunos nas provas
+
+```{r Redação vs Matemática - Desempenho, fig.height = 5, fig.width = 3, fig.align = "center", warning = FALSE}
+estados_mat <- ggplot(ENEM_presents, aes(x=SG_UF_PROVA, y=matematica)) + 
+  geom_boxplot() +
+  labs(title = "ENEM2020 - Notas de Matemática",
+       x = "Estados",
+       y = NULL) +
+    coord_flip()
+
+estados_red <- ggplot(ENEM_presents, aes(x=SG_UF_PROVA, y=redacao)) + 
+  geom_boxplot() +
+  labs(title = "ENEM2020 - Notas de Redação",
+       x = "Estados",
+       y = NULL) +
+    coord_flip()
+
+grid.arrange(estados_mat, estados_red, ncol = 1)
+```
+
+**Comentário:**
+
+Estes 2 diagrama de BoxPlot mostram o desempenho dos participantes nas provas de Matemática e Redação, independente do tipo de escola.
+
+Pode-se tomar nota de algumas considerações, baseadas em uma observação
+visual: 
+<br>
+1. A mediana das provas de Redação foi maior do que a das provas de Matemática.  
+2. A dispersão das notas das provas de Redação também é maior que a dispersão das notas de Matemática, ou seja, tem uma variabilidade maior.  
+3. Nas 2 provas, a maioria dos Estados apresenta uma certa simetria dos resultados.  
+4. Há várias notas zero, que podem ser consideradas outliers para fins de estudo/análise.  
+
+#### Comparação / Gráfico do desempenho nas provas
+
+> Uso de pacote *gridExtra* e *kableExtra*
+
+```{r Redação vs Matemática - Gráfico comparação, warning = FALSE}
+notas_mat_hist <- ENEM_presents %>%
+  ggplot() +
+  aes(redacao, 
+      fill = TP_ESCOLA,
+      colour = TP_ESCOLA) +
+  labs(title = "ENEM 2020 - Tipo de Escola",
+       x = "Notas de Redação",
+       y = "participantes") + 
+  geom_histogram(binwidth = 10,
+                 alpha = 0.2,
+                 position = "identity") +
+  theme(legend.position = "bottom",
+        legend.title = element_blank())
+
+notas_red_hist <- ENEM_presents %>%
+  ggplot() +
+  aes(matematica, 
+      fill = TP_ESCOLA,
+      colour = TP_ESCOLA) +
+  labs(title = "ENEM 2020 - Tipo de Escola",
+       x = "Notas da prova de Matemática",
+       y = "participantes") + 
+  geom_histogram(binwidth = 10,
+                 alpha = 0.2,
+                 position = "identity") +
+  theme(legend.position = "bottom",
+        legend.title = element_blank())
+
+grid.arrange(notas_mat_hist, notas_red_hist, nrow = 1)
+```
+
+```{r Contagem Sem reposta tipo de escola, include = FALSE}
+ENEM_presents %>%
+  group_by(TP_ESCOLA) %>% 
+  count(TP_ESCOLA, sort = TRUE) %>%
+  head(n = 1L) -> ENEM_sem_tipo_escola
+```
+
+`r ENEM_sem_tipo_escola[2]` participantes não indicaram na inscrição o tipo de escola. Como há o interesse em comparar desempenho em Escolas Públicas e Escolas
+Privadas, os valores não declarados foram removidos do dataset
+
+```{r Tabela Tipo de Escola sem resposta, warning = FALSE}
+table(ENEM_presents$TP_ESCOLA) -> escolas
+
+escolas <- data.frame(escolas)
+colnames(escolas) <- c("tipos", "total")
+
+escolas %>%
+  kableExtra::kbl(caption = "Tipos de Escolas") %>%
+  kableExtra::kable_classic(full_width = F, html_font = "Cambria")
+```
+
+Removendo os dados dos participantes que não indicaram o tipo de escola:
+
+```{r Removendo Tipo de Escola sem resposta, warning = FALSE}
+ENEM_presents <- ENEM_presents[ENEM_presents$TP_ESCOLA == "pública" |
+                               ENEM_presents$TP_ESCOLA == "privada", ]
+```
+
+Refazendo os gráficos de comparação de desempenho nas provas de Redação e Matemática por tipo de escola, sem os dados dos participantes que não indicaram o tipo de escola:
+
+```{r Refazendo: Redação vs Matemática - Gráfico comparação, warning = FALSE}
+notas_mat_hist <- ENEM_presents %>%
+  ggplot() +
+  aes(redacao, 
+      fill = TP_ESCOLA,
+      colour = TP_ESCOLA) +
+  labs(title = "ENEM 2020 - Tipo de Escola",
+       x = "Notas de Redação",
+       y = "participantes") + 
+  geom_histogram(binwidth = 10,
+                 alpha = 0.2,
+                 position = "identity") +
+  theme(legend.position = "bottom",
+        legend.title = element_blank())
+
+notas_red_hist <- ENEM_presents %>%
+  ggplot() +
+  aes(matematica, 
+      fill = TP_ESCOLA,
+      colour = TP_ESCOLA) +
+  labs(title = "ENEM 2020 - Tipo de Escola",
+       x = "Notas da prova de Matemática",
+       y = "participantes") + 
+  geom_histogram(binwidth = 10, 
+                 alpha = 0.2,
+                 position = "identity") +
+  theme(legend.position = "bottom",
+        legend.title = element_blank())
+
+grid.arrange(notas_mat_hist, notas_red_hist, nrow = 1)
+```
+
+### Prova de Matemática
+
+#### Comparativo do desempenho entre Escolas Públicas e Privadas:
+
+```{r Matemática - Escola pública vs privada, warning = FALSE}
+ggplot(ENEM_presents, aes(x=SG_UF_PROVA, y=matematica, colour=TP_ESCOLA)) + 
+  geom_boxplot() +
+  facet_wrap(~TP_ESCOLA) +
+  labs(title = "ENEM 2020 - Notas de Matemática",
+       x = "Estados",
+       y = NULL) +
+    theme(legend.position = "none")
+```
+
+**Comentário:** 
+Visualmente, este gráfico mostra que o desempenho na Prova de Matemática dos alunos de escolas públicas, em todos os Estados foi inferior ao dos alunos de escolas privadas.
+
+### Prova de Redação
+
+#### Comparativo do desempenho entre Escolas Públicas e Privadas:
+
+```{r Redação - Escola pública vs privada, warning = FALSE}
+ggplot(ENEM_presents, aes(x=SG_UF_PROVA, y=redacao, colour=TP_ESCOLA)) + 
+  geom_boxplot() +
+  facet_wrap(~TP_ESCOLA) +
+  labs(title = "ENEM 2020 - Notas de Redação",
+       x = "Estados",
+       y = NULL) +
+    theme(legend.position = "none")
+```
+
+**Comentário:** 
+O mesmo pode ser observado nas notas de Redação, ao ponto de notas mais altas na Redação, em alguns Estados, ser considerada um outlier. Vale a pena observar que a nota zero em Redação pode também ser considerada um outlier em todos os Estados, para ambas as escolas: públicas e privadas.
+
+### Comparativo das Escolas Públicas e Privadas para as Notas de Matemática e Redação
+
+#### Tabela
+
+> Uso dos pacotes *psych* e *kableExtra*
+
+```{r Tabela - Comparação Matemática vs Redação - escola pública vs privada, warning = FALSE}
+stat_publ <- describe(ENEM_presents[ENEM_presents$TP_ESCOLA == "pública" , 
+                                    c('matematica', 'redacao')])
+#                                    c('matematica', 'redacao')],
+#         fast = TRUE)
+
+stat_priv <- describe(ENEM_presents[ENEM_presents$TP_ESCOLA == "privada" , 
+                                    c('matematica', 'redacao')])                        
+#                                    c('matematica', 'redacao')], 
+#         fast=TRUE)
+
+
+#stat_publ %>%
+#  kbl(caption = "Escolas Públicas - Notas Matemática e Redação") %>%
+#  kable_classic(full_width = F, html_font = "Cambria") 
+
+#stat_priv %>%
+#  kbl(caption = "Escolas Privadas - Notas Matemática e Redação") %>%
+#  kable_classic(full_width = F, html_font = "Cambria") 
+
+stat_publ <- data.frame(stat_publ)
+stat_publ['aux'] <- c("Nota Matemática - Escola Pública", "Nota Redação - Escola Pública") 
+rownames(stat_publ) <- stat_publ$aux
+stat_publ$aux <- NULL
+
+stat_priv <- data.frame(stat_priv)
+stat_priv['aux'] <- c("Nota Matemática - Escola Privada", "Nota Redação - Escola Privada") 
+rownames(stat_priv) <- stat_priv$aux
+stat_priv$aux <- NULL
+
+stat <- rbind(stat_priv, stat_publ)
+stat$vars <- NULL
+
+stat %>%
+  kbl(caption = "Escolas Públicas e Privadas - Notas Matemática e Redação") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                full_width = F)
+```
+
+#### Gráfico
+
+```{r Gráfico - Comparação Matemática vs Redação - escola pública vs privada, warning = FALSE}
+stat_aux <- stat
+stat_aux$prova <- rownames(stat)
+
+stat_mat <- stat_aux[grep("Matemática", stat_aux$prova) , ]
+stat_red <- stat_aux[grep("Redação", stat_aux$prova) , ]
+
+stat_mat$tipo_prova <- "Matemática"
+stat_red$tipo_prova <- "Redação"
+
+stat_aux <- rbind(stat_mat, stat_red)
+
+stat_pub <- stat_aux[grep("Pública", stat_aux$prova) , ]
+stat_priv <- stat_aux[grep("Privada", stat_aux$prova) , ]
+
+stat_pub$tipo_escola <- "Pública"
+stat_priv$tipo_escola <- "Privada"
+
+stat_aux <- rbind(stat_pub, stat_priv)
+
+stat_aux %>%
+  ggplot() +
+  aes(x = tipo_prova,
+      y = mean,
+      fill = tipo_escola) +
+  geom_col(position = position_dodge(0.7), width = 0.6, color = "black") +
+  labs(title = "ENEM 2020 - Comparativo Médias das provas",
+       x = "Prova",
+       y = "média dos participantes") + 
+  theme(legend.position = "none") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+## Conclusão
+
+Estes dados (desconsiderando as observações em que os participantes do ENEM não informaram o tipo de escola) demonstram que osalunos de escola pública tem notas menores que os alunos que estudaram em escolas privadas. As razões para este fato podem ter algumas explicações (ou suporte) nos dados socio-econômicos informados na
+inscrição, e presentes no dataset original. 
+Futura expansão desta análise é possível para explorar outros anos do ENEM (para avaliar evolução), e dados socio-econômicos para procurar fatores que contribuem
+para este cenário.
+
+```{r controle_tempo_exploratoria_fim, include = FALSE}
+toc() -> TOTAL_AE
+TOTAL_AE <- c(TOTAL_AE$msg, TOTAL_AE$toc - TOTAL_AE$tic)
+
+TOTAL_AE <- data.frame(TOTAL_AE)
+TOTAL_AE %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL_AE
+data.frame(t(TOTAL_AE)) -> TOTAL_AE
+
+write.csv(TOTAL_AE, "A1 (1) - T2 - Tempo Análise Exploratória.csv")
+```
+
+```{r controle_tempo_total_fim, include = FALSE}
+toc() -> TOTAL
+TOTAL <- c(TOTAL$msg, TOTAL$toc - TOTAL$tic)
+
+TOTAL <- data.frame(TOTAL)
+TOTAL %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL
+data.frame(t(TOTAL)) -> TOTAL
+
+write.csv(TOTAL, "A1 (1) - T2 - Tempo TOTAL.csv")
+```

@@ -1,0 +1,616 @@
+---
+title: "TCC - Modelo T3 (Análise de Agrupamentos e ACM) - ENEM"
+author: "Adriana Melges Q Weingart"
+date: "Setembro 2022"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    number_sections: true
+    toc_depth: 5
+    toc_float:
+      collapsed: false
+---
+
+```{r controle_tempo_total_start, include = FALSE}
+library(tictoc)
+tic("total")
+```
+
+```{r settings, include=FALSE}
+set.seed(1403)
+options(scipen=999)
+```
+
+# Análise de Agrupamentos e ACM: Dados do ENEM 2020
+
+```{r controle_tempo_dataloading_start, include = FALSE}
+tic("total_dataloading")
+```
+
+## Dataset
+
+Microdados do ENEM 2020, disponíveis na página do [Ministério da Educação - Instituto Nacional de Estudos e Pesquisas Educacionais Anísio Teixeira \| Inep - ENEM](https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/enem).
+
+## Bibliotecas
+
+```{r libraries, warning = FALSE, message = FALSE}
+library(tidyverse)
+library(kableExtra)
+library(knitr)
+library(tictoc)
+library(factoextra)
+library(cabootcrs)
+library(FactoMineR)
+library(ggrepel)
+library(gridExtra)
+```
+
+
+## Loading Data
+
+Carregando o dataset de Microdados do Enem de 2020 Dataset: ENEM2020
+
+```{r, Dataset: ENEM2020, warning = FALSE, message = FALSE}
+ENEM <- read_delim("MICRODADOS_ENEM_2020.csv", delim = ";")
+```
+
+```{r controle_tempo_dataloading_fim, include = FALSE}
+toc() -> TOTAL_DL
+TOTAL_DL <- c(TOTAL_DL$msg, TOTAL_DL$toc - TOTAL_DL$tic)
+
+TOTAL_DL <- data.frame(TOTAL_DL)
+TOTAL_DL %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL_DL
+data.frame(t(TOTAL_DL)) -> TOTAL_DL
+
+write.csv(TOTAL_DL, "A1 (1) - T3 - Tempo Data Loading.csv")
+```
+
+## Cleaning Data
+
+```{r controle_tempo_datawrangling_start, include = FALSE}
+tic("total_datawrangling")
+```
+
+### Removendo as entradas dos participantes que faltaram alguma das provas
+
+```{r Cleanup - participantes que faltaram, warning = FALSE, message = FALSE}
+ENEM[ENEM$TP_PRESENCA_CN == '1' & 
+     ENEM$TP_PRESENCA_CH == '1' & 
+     ENEM$TP_PRESENCA_LC == '1' & 
+     ENEM$TP_PRESENCA_MT == '1', ] -> ENEM
+```
+
+### Removendo as colunas listadas acima como não necessárias para o estudo
+
+```{r Cleanup - observações não usadas, warning = FALSE, message = FALSE}
+ENEM <- select(ENEM, -c(TP_ENSINO, 
+                        CO_MUNICIPIO_ESC, 
+                        NO_MUNICIPIO_ESC, 
+                        CO_UF_ESC,
+                        SG_UF_ESC,
+                        TP_DEPENDENCIA_ADM_ESC,
+                        TP_LOCALIZACAO_ESC,
+                        TP_SIT_FUNC_ESC,
+                        TP_PRESENCA_CN,
+                        TP_PRESENCA_CH,
+                        TP_PRESENCA_LC,
+                        TP_PRESENCA_MT,
+                        NU_ANO,
+                        CO_MUNICIPIO_PROVA,
+                        NO_MUNICIPIO_PROVA,
+                        CO_UF_PROVA,
+                        CO_PROVA_CN,
+                        CO_PROVA_CH,
+                        CO_PROVA_LC,
+                        CO_PROVA_MT,
+                        TX_RESPOSTAS_CN,
+                        TX_RESPOSTAS_CH,
+                        TX_RESPOSTAS_LC,
+                        TX_RESPOSTAS_MT,
+                        TX_GABARITO_CN,
+                        TX_GABARITO_CH,
+                        TX_GABARITO_LC,
+                        TX_GABARITO_MT))
+```
+
+### Verificando NAs no dataset
+
+```{r, warning = FALSE}
+colSums(is.na(ENEM))
+```
+
+
+### Removendo NAs:
+
+```{r NA remove, warning = FALSE}
+ENEM <- na.omit(ENEM)
+```
+
+
+### Verificando notas zero em alguma prova / participante
+
+```{r Check - participantes que zeraram em alguma prova, warning = FALSE}
+count(ENEM[ENEM$NU_NOTA_CN == 0.0 |
+      ENEM$NU_NOTA_CH == 0.0 |
+      ENEM$NU_NOTA_LC == 0.0 |
+      ENEM$NU_NOTA_MT == 0.0 |
+      ENEM$NU_NOTA_REDACAO == 0.0  ,]) -> zero_provas
+```
+
+`r zero_provas` participantes zeraram em alguma prova.
+
+**Alunos que zeraram nas Provas Objetivas:**
+
+```{r Check - participantes que zeraram em provas objetivas, include=FALSE}
+count(ENEM[ENEM$NU_NOTA_CN == 0.0 |
+     ENEM$NU_NOTA_CH == 0.0 |
+     ENEM$NU_NOTA_LC == 0.0 |
+     ENEM$NU_NOTA_MT == 0.0  ,]) -> zero_provas_objetivas
+```
+
+`r zero_provas_objetivas` participantes zeraram em Provas Objetivas:
+<br>
+-   Ciências da Natureza  
+-   Ciências Humanas  
+-   Linguagens e Códigos  
+-   Matemática  
+
+Apesar de várias informações publicadas na internet (como o Guia da Carreira, na publicação disponível no link: <https://www.guiadacarreira.com.br/educacao/motivos-para-zerar-o-enem/>) dizerem que "não dá para tirar zero nas provas objetivas do ENEM", há 14 entradas com participantes que zeraram em alguma das 4 provas objetivas (Ciências da Natureza, Ciências Humanas, Linguagens e Códigos e Matemática)
+
+Estas entradas, durante a análise, se comportariam como outliers, afetando os resultados. Portanto, ara efeito desta análise, estas entradas serão descartadas.
+
+**Alunos que zeraram na Redação:**
+
+`r count(ENEM[ENEM$NU_NOTA_REDACAO == 0.0  ,])` participantes zeraram na Redação.
+
+De acordo com o artigo publicado pelo Mundo Vestibular em 10/outubro/2022 (disponível em <https://www.mundovestibular.com.br/blog/7-motivos-para-tirar-zero-na-redacao-do-enem>), "Zerar na redação do Exame Nacional do Ensino Médio (Enem) pode deixar você de fora da disputa por uma bolsa de estudos em faculdade particular ou vaga na universidade pública e impedir a contratação de financiamento estudantil.".
+
+Considerando este fato, e os motivos que levam ao "zero", assume-se que nenhum estudante deseja zerar na redação.
+
+Para efeito desta análise, estas entradas serão descartadas.
+
+
+### Removendo alunos que zeraram em alguma prova
+
+```{r Cleanup - participantes que zeraram em alguma prova, warning = FALSE, message = FALSE}
+ENEM[ENEM$NU_NOTA_CN != 0.0 & 
+     ENEM$NU_NOTA_CH != 0.0 &
+     ENEM$NU_NOTA_LC != 0.0 &
+     ENEM$NU_NOTA_MT != 0.0 &
+     ENEM$NU_NOTA_REDACAO != 0.0  ,] -> ENEM
+```
+
+```{r controle_tempo_datawrangling_fim, include = FALSE}
+toc() -> TOTAL_DW
+TOTAL_DW <- c(TOTAL_DW$msg, TOTAL_DW$toc - TOTAL_DW$tic)
+
+TOTAL_DW <- data.frame(TOTAL_DW)
+TOTAL_DW %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL_DW
+data.frame(t(TOTAL_DW)) -> TOTAL_DW
+
+write.csv(TOTAL_DW, "A1 (1) - T3 - Tempo Data Wrangling.csv")
+```
+
+
+## Análise de Cluster / Agrupamento
+
+```{r controle_tempo_analise_cluster_start, include = FALSE}
+tic("total_analisecluster")
+```
+
+```{r Análise de Cluster, warning = FALSE, message = FALSE}
+dist_ENEM <- dist(ENEM[ , c(12:15, 23)], method = "euclidean")
+```
+
+
+### Definindo o cluster
+
+**métodos considerados para agrupamento "single", "complete" e "average"**
+
+```{r Definindo o cluster, warning = FALSE, message = FALSE}
+cluster_single <- hclust(dist_ENEM, method = "single" )
+cluster_complete <- hclust(dist_ENEM, method = "complete" )
+cluster_average <- hclust(dist_ENEM, method = "average" )
+```
+
+
+**métodos considerados para identificar quantidade de agrupamentos: "elbow" (wss), "silhouette" e "gap_stat"**
+
+#### Método "elbow" (method = "wss")
+FUN = hcut > Hierarchical Cluster
+
+```{r Cluster - método elbow, warning = FALSE}
+fviz_nbclust(ENEM[ , c(12:15, 23)], FUN = hcut, method = "wss") +
+            labs(subtitle = "Elbow method")
+```
+
+O "Elbow" no método elbow acontece (visualmente) entre 2, 3 e 4.
+
+
+#### Método "silhouette" (method = "silhouette")
+FUN = hcust
+
+```{Cluster - método silhouette, warning = FALSE}
+fviz_nbclust(ENEM[ , c(12:15, 23)], FUN = hcut, method = "silhouette") +
+               labs(subtitle = "Silhouette method")             
+```
+
+O Método Silhouette aponta 2 como o número ideal de custers.
+
+
+#### Gap Statistic Method (method = "gap_stat")
+FUN = hcut
+
+```{r Cluster - gap statistic method, warning = FALSE}
+fviz_nbclust(ENEM[ , c(12:15, 23)], FUN = hcut, nstart = 25,  method = "gap_stat", nboot = 50) +
+  labs(subtitle = "Gap statistic method")
+```
+
+O Método Gap Statistic aponta 3 como o número ideal de custers.
+
+
+Portanto, adotando 3 agrupamentos.
+
+
+### Calculando os agrupamentos
+
+```{r calculando os agrupamentos, warning = FALSE}
+grupos <- cutree(cluster_complete, k = 3)
+table(grupos)
+```
+
+**transformando em data frame a saida do cluster, e join com o dataset original**
+
+```{r Join grupos criados ao dataset original, warning = FALSE, message = FALSE}
+notas_grupos <- data.frame(grupos)
+ENEM <- cbind(ENEM, notas_grupos)
+```
+
+
+### Análise Descritiva
+
+#### Média das variáveis por grupo
+
+```{r média das variáveis por grupo, warning = FALSE}
+Notas_Medias_por_grupo <- ENEM %>% 
+  group_by(grupos) %>% 
+  summarise(n = n(),
+            nota_ciencias_natureza = mean(NU_NOTA_CN), 
+            nota_ciencias_humanas = mean(NU_NOTA_CH), 
+            nota_linguagens_e_codigos = mean(NU_NOTA_LC),
+            nota_matematica = mean(NU_NOTA_MT), 
+            nota_redacao = mean(NU_NOTA_REDACAO) 
+  )
+Notas_Medias_por_grupo %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", 
+                full_width = T, 
+                font_size = 12)
+```
+
+```{r controle_tempo_analise_cluster_fim, include = FALSE}
+toc() -> TOTAL_AC
+TOTAL_AC <- c(TOTAL_AC$msg, TOTAL_AC$toc - TOTAL_AC$tic)
+
+TOTAL_AC <- data.frame(TOTAL_AC)
+TOTAL_AC %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL_AC
+data.frame(t(TOTAL_AC)) -> TOTAL_AC
+
+write.csv(TOTAL_AC, "A1 (1) - T3 - Tempo Análise de Cluster.csv")
+```
+
+
+## Análise por Correspondência Múltipla (ACM)
+
+```{r controle_tempo_acm_start, include = FALSE}
+tic("total_acm")
+```
+
+Considerando as variáveis socioeconômicas:
+<br>
+* Q021: Participante tem TV por assinatura em casa (sim/não)  
+* Q024: Participante tem computador me casa (sim/não)  
+* Q025: Participante tem acesso à internet em casa (sim/não)  
+* grupos: clusters criados durante a Análise de Agrupamentos.
+
+```{r Novo Dataset com variávies de estudo, warning = FALSE, message = FALSE}
+
+ENEM_socioecon <- select(ENEM, c(Q021, Q024, Q025, grupos))
+
+colnames(ENEM_socioecon) <- c("tv_assinatura",
+                              "computador",
+                              "internet",
+                              "cluster")
+
+ENEM_socioecon["tv_assinatura"][ENEM_socioecon["tv_assinatura"] == "A"] <- "não"
+ENEM_socioecon["tv_assinatura"][ENEM_socioecon["tv_assinatura"] == "B"] <- "sim"
+
+ENEM_socioecon["computador"][ENEM_socioecon["computador"] == "A"] <- "não"
+ENEM_socioecon["computador"][ENEM_socioecon["computador"] == "B" | 
+                               ENEM_socioecon["computador"] == "C" | 
+                               ENEM_socioecon["computador"] == "D" | 
+                               ENEM_socioecon["computador"] == "E"] <- "sim"
+
+ENEM_socioecon["internet"][ENEM_socioecon["internet"] == "A"] <- "não"
+ENEM_socioecon["internet"][ENEM_socioecon["internet"] == "B"] <- "sim"
+```
+
+
+### QUI2 Test
+
+#### Variáveis tv_assinatura vs computador
+
+```{r QUI2 Test - tv_assinatura vs computador, warning = FALSE}
+tab_tvassinaturaXcomputador <- table(ENEM_socioecon$tv_assinatura,
+                                     ENEM_socioecon$computador)
+tab_tvassinaturaXcomputador
+qui2_tvassinaturaXcomputador <- chisq.test(tab_tvassinaturaXcomputador)
+qui2_tvassinaturaXcomputador
+```
+
+`r if (qui2_tvassinaturaXcomputador$p.value < 0.05) {cat("p.value (", round(qui2_tvassinaturaXcomputador$p.value, digits = 20), ") é menor que 0,05 >> OK")} `
+
+
+#### Variáveis tv_assinatura vs internet
+
+```{r QUI2 Test - tv_assinatura vs internet, warning = FALSE}
+tab_tvassinaturaXinternet <- table(ENEM_socioecon$tv_assinatura,
+                                   ENEM_socioecon$internet)
+tab_tvassinaturaXinternet
+qui2_tvassinaturaXinternet <- chisq.test(tab_tvassinaturaXinternet)
+qui2_tvassinaturaXinternet
+```
+
+`r if (qui2_tvassinaturaXinternet$p.value < 0.05) {cat("p.value (", round(qui2_tvassinaturaXinternet$p.value, digits = 20), ") é menor que 0,05 >> OK")} `
+
+
+#### Variáveis tv_assinatura vs cluster de participantes
+
+```{r QUI2 Test - tv_assinatura vs cluster, warning = FALSE}
+tab_tvassinaturaXcluster <- table(ENEM_socioecon$tv_assinatura,
+                                  ENEM_socioecon$cluster)
+tab_tvassinaturaXcluster
+qui2_tvassinaturaXcluster <- chisq.test(tab_tvassinaturaXcluster)
+qui2_tvassinaturaXcluster
+```
+
+`r if (qui2_tvassinaturaXcluster$p.value < 0.05) {cat("p.value (", round(qui2_tvassinaturaXcluster$p.value, digits = 20), ") é menor que 0,05 >> OK")} `
+
+
+#### Variáveis computador vs internet
+
+```{r QUI2 Test - computador vs internet, warning = FALSE}
+tab_computadorXinternet <- table(ENEM_socioecon$computador,
+                                 ENEM_socioecon$internet)
+tab_computadorXinternet
+qui2_computadorXinternet <- chisq.test(tab_computadorXinternet)
+qui2_computadorXinternet
+```
+
+`r if (qui2_computadorXinternet$p.value < 0.05) {cat("p.value (", round(qui2_computadorXinternet$p.value, digits = 20), ") é menor que 0,05 >> OK")} `
+
+
+#### Variáveis computador vs cluster de participantes
+
+```{r QUI2 Test - computador vs cluster, warning = FALSE}
+tab_computadorXcluster <- table(ENEM_socioecon$computador,
+                                ENEM_socioecon$cluster)
+tab_computadorXcluster
+qui2_computadorXcluster <- chisq.test(tab_computadorXcluster)
+qui2_computadorXcluster
+```
+
+`r if (qui2_computadorXcluster$p.value < 0.05) {cat("p.value (", round(qui2_computadorXcluster$p.value, digits = 20), ") é menor que 0,05 >> OK")} `
+
+
+#### Variáveis internet vs cluster de participantes
+
+```{r QUI2 Test - internet vs cluster, warning = FALSE}
+tab_internetXcluster <- table(ENEM_socioecon$internet,
+                              ENEM_socioecon$cluster)
+tab_internetXcluster
+qui2_internetXcluster <- chisq.test(tab_internetXcluster)
+qui2_internetXcluster
+```
+
+`r if (qui2_internetXcluster$p.value < 0.05) {cat("p.value (", round(qui2_internetXcluster$p.value, digits = 20), ") é menor que 0,05 >> OK")} `
+
+
+### Matriz binária
+
+```{r Matriz Binária, warning = FALSE, message = FALSE}
+matriz_binaria <- getindicator(Xinput = ENEM_socioecon)
+#matriz_binaria
+#CA(matriz_binaria)
+```
+
+
+### Matriz de Burt
+
+```{r Matriz de Burt, warning = FALSE, message = FALSE}
+matriz_burt <- getBurt(Xinput = ENEM_socioecon)
+#matriz_burt
+#CA(matriz_burt)
+```
+
+
+###  Rodando a ACM
+
+```{r ACM, include = FALSE}
+ENEM_socioecon$cluster <- as.character(ENEM_socioecon$cluster)
+ACM_ENEM <- MCA(ENEM_socioecon, method = "Indicador")
+```
+
+#### Coordenadas de cada categoria
+*componente var$coord do objeto ACM_ENEM*
+
+```{r coordenada de cada categoria, warning = FALSE}
+round(ACM_ENEM$var$coord, 3) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", 
+                full_width = T, 
+                font_size = 12)
+```
+
+#### Inércias Principais
+*componente $eig do objeto ACM_ENEM*
+
+```{r Inércias Principais, warning = FALSE}
+ACM_ENEM$eig
+```
+
+
+#### Coordenadas de cada Observação
+*componente ind$coord do objeto ACM_ENEM*
+
+```{r Coordenadas de cada observação, include = FALSE}
+ACM_ENEM$ind$coord
+```
+
+### Percentual da Inércia Principal explicada por Dimensão
+
+#### Número de Categorias por Variável
+
+```{r número de categorias por variável, warning = FALSE, message = FALSE}
+categorias <- apply(ENEM_socioecon, 
+                    MARGIN =  2, 
+                    FUN = function(x) nlevels(as.factor(x)))
+```
+
+
+```{r Número de dimensões da ACM, eval = FALSE, include = FALSE}
+#### Categorias
+# Número de dimensões da ACM (Análise de Correspondência Múltipla
+dimensoes <- sum(categorias) - length(categorias)
+dimensoes
+```
+
+#### Inércia Total Explicada
+
+```{r Inércia total, warning = FALSE}
+inercia_total <- (sum(categorias) - length(categorias)) / length(categorias)
+# inercia_total
+
+#sum(ACM_ENEM$eig[,1])
+
+inercia_total_explicada <- ACM_ENEM$eig[,1] / sum(ACM_ENEM$eig[,1])
+
+data.frame(Dimensão = paste("Dimensão", 1:length(inercia_total_explicada)),
+           Inércia_Total = inercia_total_explicada) %>%
+  ggplot(aes(x = Dimensão, 
+             y = Inércia_Total, 
+             label = paste0(round(Inércia_Total,3)*100,"%"))) +
+  geom_bar(stat = "identity",
+           color = "#440154FF", 
+           fill = "#287C8EFF") +
+  geom_label(vjust = 2) +
+  labs(title = paste("Inércia Total Explicada de",
+                     paste0(sum(inercia_total_explicada) * 100),"%")) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+#### Mapa Perceptual
+
+```{r mapa perceptual - tabela, warning = FALSE}
+ACM_ENEM_df <- data.frame(ACM_ENEM$var$coord, Variável = rep(names(categorias), categorias))
+
+ACM_ENEM_df %>%
+  rownames_to_column() %>%
+  rename(Categoria = 1) %>%
+  mutate(Categoria = gsub("perfil.","", Categoria),
+         Categoria = gsub("aplicacao.","", Categoria),
+         Categoria = gsub("estado_civil.","", Categoria)) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", 
+                full_width = T, 
+                font_size = 12)
+```
+
+```{r mapa perceptual - gráfico, warning = FALSE}
+#ggplotly(
+ACM_ENEM_df %>%
+  rownames_to_column() %>%
+  rename(Categoria = 1) %>%
+  ggplot(aes(x = Dim.1, 
+             y = Dim.2, 
+             label = Categoria, 
+             color = Variável, 
+             shape = Variável)) +
+  geom_point() +
+  geom_label_repel() +
+  geom_vline(aes(xintercept = 0), linetype = "dashed", color = "grey") +
+  geom_hline(aes(yintercept = 0), linetype = "dashed", color = "grey") +
+  labs(x = paste("Dimensão 1:", paste0(round(ACM_ENEM$eig[1,2], 2), "%")),
+       y = paste("Dimensão 2:", paste0(round(ACM_ENEM$eig[2,2], 2), "%"))) +
+  scale_color_viridis_d() +
+  theme(panel.background = element_rect("white"),
+        panel.border = element_rect("NA"),
+        panel.grid = element_line("gray95"),
+        legend.position = "none") -> GRAFICO_Mapa_Perceptual
+#)
+
+GRAFICO_Mapa_Perceptual
+```
+
+- - -
+
+## Análise dos Agrupamentos vs Variáveis Socioeconômicas
+
+```{r Análise, warning = FALSE}
+TableGrob_Notas_Medias_por_grupo <- tableGrob(round(Notas_Medias_por_grupo, digits = 3), 
+                                              theme=ttheme_minimal(base_size = 8))
+grid.arrange(GRAFICO_Mapa_Perceptual, TableGrob_Notas_Medias_por_grupo, ncol = 1)
+```
+
+## Conclusão
+
+Com base no Mapa Perceptual acima pode-se verificar que o grupo 2 (melhores médias em todas as provas) apresenta forte associação com as categorias "internet_sim", "computador_sim" e "tv_assinatura_sim".
+
+Já o grupo 3 (médias mais baixas em todas as provas) não tem associal próxima a nenhuma das outras categorias.
+
+E o grupo 1 (médias intermediárias nas provas) apresenta forte associação com as categorias "internet_não", "computador_não" e "tv_assinatura_não".
+
+Dos dados apresentados, não é possível estabelecer relação de causa-e-efeito, como por exemplo, se as notas do grupo 2 são melhores porque os participantes classificados neste grupo tem mais acesso à informação; ou ainda, se os participantes deste grupo tem um poder aquisitivo maior, que lhes permite ter acesso à TV por assinatura, Computador e Internet em casa, e por consequência a uma melhor educação ou preparação também - o que não aparece para os participantes do grupo 1.
+
+Para poder aprofundar esta análise, e talvez investigar as razões para essas associações, outros dados precisariam ser analisados, como:
+* renda familiar;  
+* tipo de escola;  
+
+Para esta análise, fica apenas a identificação de que notas maiores no ENEM estão associadas aos participantes que tem TV por assinatura, Computador e Internet em casa. Mas, reforçando, não há como estabelecer relação de causa-e-efeito apenas com os dados analisados.
+
+```{r controle_tempo_acm_fim, include = FALSE}
+toc() -> TOTAL_ACM
+TOTAL_ACM <- c(TOTAL_ACM$msg, TOTAL_ACM$toc - TOTAL_ACM$tic)
+
+TOTAL_ACM <- data.frame(TOTAL_ACM)
+TOTAL_ACM %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL_ACM
+data.frame(t(TOTAL_ACM)) -> TOTAL_ACM
+
+write.csv(TOTAL_ACM, "A1 (1) - T3 - Tempo ACM.csv")
+```
+
+- - -
+
+```{r controle_tempo_total_fim, include = FALSE}
+toc() -> TOTAL
+TOTAL <- c(TOTAL$msg, TOTAL$toc - TOTAL$tic)
+
+TOTAL <- data.frame(TOTAL)
+TOTAL %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL
+data.frame(t(TOTAL)) -> TOTAL
+
+write.csv(TOTAL, "A1 (1) - T3 - Tempo TOTAL.csv")
+```

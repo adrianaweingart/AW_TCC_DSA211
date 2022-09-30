@@ -1,0 +1,450 @@
+---
+title: "TCC - Modelo T4 (Análise Fatorial) - ENEM"
+author: "Adriana Melges Q Weingart"
+date: "Setembro 2022"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    number_sections: true
+    toc_depth: 5
+    toc_float:
+      collapsed: false
+---
+
+```{r controle_tempo_total_start, include = FALSE}
+library(tictoc)
+tic("total")
+```
+
+```{r settings, include=FALSE}
+set.seed(1403)
+options(scipen=999)
+```
+
+# Análise Fatorial: Dados do ENEM 2020
+
+```{r controle_tempo_dataloading_start, include = FALSE}
+tic("total_dataloading")
+```
+
+## Dataset
+
+Microdados do ENEM 2020, disponíveis na página do [Ministério da Educação - Instituto Nacional de Estudos e Pesquisas Educacionais Anísio Teixeira \| Inep - ENEM](https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/enem).
+
+## Bibliotecas
+
+```{r libraries, warning = FALSE, message = FALSE}
+library(tidyverse)
+library(kableExtra)
+library(knitr)
+library(tictoc)
+library(reshape2)
+library(PerformanceAnalytics)
+library(psych)
+library(ggrepel)
+library(plotly)
+library(factoextra)
+```
+
+## Loading Data
+
+Carregando o dataset de Microdados do Enem de 2020 Dataset: ENEM2020
+
+```{r, Dataset: ENEM2020, warning = FALSE, message = FALSE}
+ENEM <- read_delim("MICRODADOS_ENEM_2020.csv", delim = ";")
+```
+
+```{r controle_tempo_dataloading_fim, include = FALSE}
+toc() -> TOTAL_DL
+TOTAL_DL <- c(TOTAL_DL$msg, TOTAL_DL$toc - TOTAL_DL$tic)
+
+TOTAL_DL <- data.frame(TOTAL_DL)
+TOTAL_DL %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL_DL
+data.frame(t(TOTAL_DL)) -> TOTAL_DL
+
+write.csv(TOTAL_DL, "A1 (1) - T4 - Tempo Data Loading.csv")
+```
+
+## Cleaning Data
+
+```{r controle_tempo_datawrangling_start, include = FALSE}
+tic("total_datawrangling")
+```
+
+### Removendo as entradas dos participantes que faltaram alguma das provas
+
+```{r Cleanup - participantes que faltaram, warning = FALSE, message = FALSE}
+ENEM[ENEM$TP_PRESENCA_CN == '1' & 
+     ENEM$TP_PRESENCA_CH == '1' & 
+     ENEM$TP_PRESENCA_LC == '1' & 
+     ENEM$TP_PRESENCA_MT == '1', ] -> ENEM
+```
+
+### Removendo as colunas listadas acima como não necessárias para o estudo
+
+```{r Cleanup - observações não usadas, warning = FALSE, message = FALSE}
+ENEM <- select(ENEM, -c(TP_ENSINO, 
+                        CO_MUNICIPIO_ESC, 
+                        NO_MUNICIPIO_ESC, 
+                        CO_UF_ESC,
+                        SG_UF_ESC,
+                        TP_DEPENDENCIA_ADM_ESC,
+                        TP_LOCALIZACAO_ESC,
+                        TP_SIT_FUNC_ESC,
+                        TP_PRESENCA_CN,
+                        TP_PRESENCA_CH,
+                        TP_PRESENCA_LC,
+                        TP_PRESENCA_MT,
+                        NU_ANO,
+                        CO_MUNICIPIO_PROVA,
+                        NO_MUNICIPIO_PROVA,
+                        CO_UF_PROVA,
+                        CO_PROVA_CN,
+                        CO_PROVA_CH,
+                        CO_PROVA_LC,
+                        CO_PROVA_MT,
+                        TX_RESPOSTAS_CN,
+                        TX_RESPOSTAS_CH,
+                        TX_RESPOSTAS_LC,
+                        TX_RESPOSTAS_MT,
+                        TX_GABARITO_CN,
+                        TX_GABARITO_CH,
+                        TX_GABARITO_LC,
+                        TX_GABARITO_MT))
+```
+
+### Verificando NAs no dataset
+
+```{r, warning = FALSE}
+colSums(is.na(ENEM))
+```
+
+### Removendo NAs:
+
+```{r NA remove, warning = FALSE}
+ENEM <- na.omit(ENEM)
+```
+
+### Verificando notas zero em alguma prova / participante
+
+```{r Check - participantes que zeraram em alguma prova, warning = FALSE}
+count(ENEM[ENEM$NU_NOTA_CN == 0.0 |
+     ENEM$NU_NOTA_CH == 0.0 |
+     ENEM$NU_NOTA_LC == 0.0 |
+     ENEM$NU_NOTA_MT == 0.0 |
+     ENEM$NU_NOTA_REDACAO == 0.0  ,]) -> zero_provas
+```
+
+`r zero_provas` participantes zeraram em alguma prova.
+
+**Alunos que zeraram nas Provas Objetivas:**
+
+```{r Check - participantes que zeraram em provas objetivas, include=FALSE}
+count(ENEM[ENEM$NU_NOTA_CN == 0.0 |
+     ENEM$NU_NOTA_CH == 0.0 |
+     ENEM$NU_NOTA_LC == 0.0 |
+     ENEM$NU_NOTA_MT == 0.0  ,]) -> zero_provas_objetivas
+```
+
+`r zero_provas_objetivas` participantes zeraram em Provas Objetivas:
+<br>
+-   Ciências da Natureza  
+-   Ciências Humanas  
+-   Linguagens e Códigos  
+-   Matemática  
+
+Apesar de várias informações publicadas na internet (como o Guia da Carreira, na publicação disponível no link: <https://www.guiadacarreira.com.br/educacao/motivos-para-zerar-o-enem/>) dizerem que "não dá para tirar zero nas provas objetivas do ENEM", há 14 entradas com participantes que zeraram em alguma das 4 provas objetivas (Ciências da Natureza, Ciências Humanas, Linguagens e Códigos e Matemática)
+
+Estas entradas, durante a análise, se comportariam como outliers, afetando os resultados. Portanto, ara efeito desta análise, estas entradas serão descartadas.
+
+**Alunos que zeraram na Redação:**
+
+`r count(ENEM[ENEM$NU_NOTA_REDACAO == 0.0  ,])` participantes zeraram na Redação.
+
+De acordo com o artigo publicado pelo Mundo Vestibular em 10/outubro/2022 (disponível em <https://www.mundovestibular.com.br/blog/7-motivos-para-tirar-zero-na-redacao-do-enem>), "Zerar na redação do Exame Nacional do Ensino Médio (Enem) pode deixar você de fora da disputa por uma bolsa de estudos em faculdade particular ou vaga na universidade pública e impedir a contratação de financiamento estudantil.".
+
+Considerando este fato, e os motivos que levam ao "zero", assume-se que nenhum estudante deseja zerar na redação.
+
+Para efeito desta análise, estas entradas serão descartadas.
+
+### Removendo alunos que zeraram em alguma prova
+
+```{r Cleanup - participantes que zeraram em alguma prova, warning = FALSE, message = FALSE}
+ENEM[ENEM$NU_NOTA_CN != 0.0 & 
+     ENEM$NU_NOTA_CH != 0.0 &
+     ENEM$NU_NOTA_LC != 0.0 &
+     ENEM$NU_NOTA_MT != 0.0 &
+     ENEM$NU_NOTA_REDACAO != 0.0  ,] -> ENEM
+```
+
+```{r controle_tempo_datawrangling_fim, include = FALSE}
+toc() -> TOTAL_DW
+TOTAL_DW <- c(TOTAL_DW$msg, TOTAL_DW$toc - TOTAL_DW$tic)
+
+TOTAL_DW <- data.frame(TOTAL_DW)
+TOTAL_DW %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL_DW
+data.frame(t(TOTAL_DW)) -> TOTAL_DW
+
+write.csv(TOTAL_DW, "A1 (1) - T4 - Tempo Data Wrangling.csv")
+```
+
+## Análise Fatorial
+
+```{r controle_tempo_analise_fatorial_start, include = FALSE}
+tic("total_analisefatorial")
+```
+
+### Avaliando o uso de PCA
+
+Construção da matriz de correlações (rho_ENEM) e avaliar: 
+  a) a estatística Kaiser-Meyer-Olkin (KMO); 
+  b) o alpha de Cronbach; e 
+  c) o teste de esfericidade de Bartlett.
+  
+#### Matriz de Correlações
+
+```{r Matriz de Correlações, warning = FALSE}
+rho_ENEM <- cor(ENEM[ ,c(12, 13, 14, 15, 23)])
+# Colunas
+# 12 - NU_NOTA_CN
+# 13 - NU_NOTA_CH
+# 14 - NU_NOTA_LC
+# 15 - NU_NOTA_MC
+# 23 - NU_NOTA_REDACAO
+```
+
+**Observando as correlações entre variáveis**
+
+```{r Correlações entre variáveis, warning = FALSE}
+chart.Correlation(ENEM[ ,c(12, 13, 14, 15, 23)])
+```
+
+**Mapa de calor das correlações**
+
+```{r Mapa de calor das Correlações, warning = FALSE}
+rho_ENEM %>% 
+  melt() %>% 
+  ggplot() +
+  geom_tile(aes(x = Var1, y = Var2, fill = value)) +
+  geom_text(aes(x = Var1, y = Var2, label = round(x = value, digits = 3)),
+            size = 4) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Correlações") +
+  scale_fill_gradient2(low = "dodgerblue4", 
+                       mid = "white", 
+                       high = "brown4",
+                       midpoint = 0) +
+  theme(panel.background = element_rect("white"),
+        panel.grid = element_line("grey95"),
+        panel.border = element_rect(NA),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 90))
+```
+
+#### Estatística KMO 
+
+```{r Estatística KMO, warning = FALSE}
+KMO(r = rho_ENEM)
+```
+
+#### Teste de Esfericidade de Bartlett
+
+```{r Teste de Esfericidade de Bartlett, warning = FALSE}
+cortest.bartlett(R = rho_ENEM)
+```
+
+p.value = `r cortest.bartlett(R = rho_ENEM)$p.value` < 0.05
+
+
+### Análise PCA - Principal Component Analysis
+
+#### Padronização da base de dados 
+
+**procedimento zscores, utilizando a função scale()**
+
+```{r Padronização, include = FALSE}
+ENEM$NU_INSCRICAO <- as.character(ENEM$NU_INSCRICAO)
+
+ENEM_std <- ENEM[, c(1,12,13,14,15,23)] %>% 
+  column_to_rownames("NU_INSCRICAO") %>% 
+  scale() %>% 
+  data.frame()
+
+ENEM_notas <- ENEM[, c(1,12,13,14,15,23)] %>% 
+  column_to_rownames("NU_INSCRICAO") %>% 
+  data.frame()
+```
+
+#### Rodando a PCA
+
+```{r PCA , warning = FALSE}
+afpc_ENEM <- prcomp(ENEM_std)
+```
+
+#### Definição dos Fatores
+
+##### Extração dos eigenvalues da Matriz de Correlações
+
+```{r EigenValues, warning = FALSE}
+eigenvalues_rho_ENEM <- eigen(rho_ENEM)
+cat("eigenvalues: ", eigenvalues_rho_ENEM$values)
+```
+
+##### Scores Fatoriais
+
+```{r Scores Fatoriais, warning = FALSE}
+scores_fatoriais <- t(afpc_ENEM$rotation)/afpc_ENEM$sdev 
+colnames(scores_fatoriais) <- colnames(ENEM_std)
+
+#scores_fatoriais
+
+scores_fatoriais %>%
+  t() %>%
+  data.frame() %>%
+  rename(PC1 = 1) %>%
+  select(PC1) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", 
+                full_width = T, 
+                font_size = 12)
+```
+
+##### Fatores
+
+```{r Cargas FAtoriais , include = FALSE}
+fatores <- list()
+
+for(i in 1:nrow(scores_fatoriais)){
+  fatores[[i]] <- rowSums(x = sweep(x = ENEM_std, 
+                                    MARGIN = 2, 
+                                    STATS = scores_fatoriais[i,], 
+                                    FUN = `*`))
+}
+
+fatores_df <- data.frame((sapply(X = fatores, FUN = c)))
+
+ENEM_final <-  cbind(ENEM_notas,
+                     fatores_df) %>% 
+  rename(F1 = X1,
+         F2 = X2,
+         F3 = X3,
+         F4 = X4,
+         F5 = X5) 
+```
+
+#### Peso das Variáveis em cada Componente Principal
+
+```{r Gráfico: Peso das Variâncias em cada Componente Principal , warning = FALSE}
+data.frame(afpc_ENEM$rotation) %>%
+  mutate(var = names(ENEM[c(12,13,14,15,23)]))  %>% 
+  melt(id.vars = "var") %>%
+  mutate(var = factor(var)) %>%
+  ggplot(aes(x = var, y = value, fill = var)) +
+  geom_bar(stat = "identity", color = "black") +
+  facet_wrap(~variable) +
+  labs(x = NULL, y = NULL, fill = "Legenda:") +
+  scale_fill_viridis_d() +
+  theme(panel.background = element_rect("white"),
+        panel.grid = element_line("grey95"),
+        panel.border = element_rect(NA),
+        axis.text.x = element_text(angle = 90))
+```
+
+#### Compartilhamento das Variâncias Compartilhadas entre os Componentes Principais
+
+```{r Gráfico: Compartilhamento das Variâncias entre os Componente Principal, warning = FALSE}
+ggplotly(
+  fviz_eig(X = afpc_ENEM,
+           ggtheme = theme_bw(), 
+           barcolor = "black", 
+           barfill = "dodgerblue4",
+           linecolor = "darkgoldenrod3",
+           main = "Compartilhamento das Variâncias Compartilhadas entre os Componentes Principais")
+)
+```
+
+#### Cargas Fatoriais
+
+```{r Cargas Fatoriais, warning = FALSE}
+k <- sum((afpc_ENEM$sdev ^ 2) > 1) #número de variáveis presentes na base de dados
+cargas_fatoriais <- afpc_ENEM$rotation[, 1:k] %*% diag(afpc_ENEM$sdev[1:k])
+
+cat("cargas fatoriais: ", cargas_fatoriais)
+```
+
+### Construção de um Ranking
+
+#### Scores Fatoriais para F1
+*Assumindo-se apenas o F1 como indicador*
+
+Observação: Na construção de rankings no R, devemos efetuar a multiplicação por -1, visto que os scores fatoriais das observações mais fortes são, por padrão, apresentados acompanhados do sinal de menos.
+
+```{r Scores Fatoriais para F1, warning = FALSE}
+score_D1 <- scores_fatoriais[1,]
+
+F1 <- t(apply(ENEM_std, 1, function(x) x * score_D1))
+
+F1 <- data.frame(F1) %>%
+  mutate(fator1 = rowSums(.) * 1)
+```
+
+#### Consolidando as tabelas
+
+```{r Consolidação das tabelas, warning = FALSE}
+ENEM_notas["Fator1"] <- F1$fator1
+```
+
+#### Ranking
+
+```{r Rannking, warning = FALSE}
+var_compartilhada <- (afpc_ENEM$sdev ^ 2/sum(afpc_ENEM$sdev ^ 2))
+
+ENEM_notas %>%
+  mutate(pontuacao = Fator1 * var_compartilhada[1]) -> ENEM_final
+```
+
+#### Visualizando o ranking final
+*visualizando apenas os 10 primeiros "classificados"*
+
+```{r Ranking - visualização, warning = FALSE}
+head(ENEM_final, n = 10L) %>%
+  arrange(desc(pontuacao)) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped", 
+                full_width = T, 
+                font_size = 12)
+```
+
+```{r controle_tempo_analise_fatorial_fim, include = FALSE}
+toc() -> TOTAL_AF
+TOTAL_AF <- c(TOTAL_AF$msg, TOTAL_AF$toc - TOTAL_AF$tic)
+
+TOTAL_AF <- data.frame(TOTAL_AF)
+TOTAL_AF %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL_AF
+data.frame(t(TOTAL_AF)) -> TOTAL_AF
+
+write.csv(TOTAL_AF, "A1 (1) - T4 - Tempo Análise Fatorial.csv")
+```
+
+```{r controle_tempo_total_fim, include = FALSE}
+toc() -> TOTAL
+TOTAL <- c(TOTAL$msg, TOTAL$toc - TOTAL$tic)
+
+TOTAL <- data.frame(TOTAL)
+TOTAL %>%
+  purrr::set_names(as.character(slice(., 1))) %>%
+  slice(-1) -> TOTAL
+data.frame(t(TOTAL)) -> TOTAL
+
+write.csv(TOTAL, "A1 (1) - T4 - Tempo TOTAL.csv")
+```
+
