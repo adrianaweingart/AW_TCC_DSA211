@@ -40,3 +40,5 @@ Este repositório está estruturado da seguinte forma:
 - branch <i>AW_TCC_Scripts</i>: scripts criados para testar os diversos cenários nos ambientes selecionados. Os scripts estão no formato R Script ou R Markdown. Mais detalhes sobre os scripts podem ser vistos no README do branch.
 
 - branch <i>AW_TCC_ENEM2020</i>: resultados das execuções dos scripts criados em R Markdown, no formato HTML.
+
+- branch <i>AW_TCC</i>: cópia (em .pdf) do meu trabalho, na íntegra; e apresentação (.pdf) que useo para defesa do trabalho junto à banca da USP/ESAQL.
