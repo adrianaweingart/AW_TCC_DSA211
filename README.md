@@ -1,4 +1,4 @@
-# AW_TCC_DSA211
+# AW_TCC_Scripts
 
 Este respositório contém os scripts (R Script e R Markdown) criados para execução dos testes do estudo de suporte para elaboração do TCC do curso de MBA em Data Science e Analytics da USP/ESALQ - 2021/2022.
 
