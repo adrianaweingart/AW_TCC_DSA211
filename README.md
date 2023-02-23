@@ -1,4 +1,4 @@
-# AW_TCC_DSA211
+# AW_TCC_Procedimentos
 
 Este respositório contém os procedimentos criados para execução dos testes do estudo de suporte para elaboração do TCC do curso de MBA em Data Science e Analytics da USP/ESALQ - 2021/2022.
 
